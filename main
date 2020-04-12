@@ -1,0 +1,274 @@
+import requests
+import json
+import datetime
+import time
+from config import *
+import csv
+
+f = open("stocks.csv", "r")
+stocks = list(csv.reader(f))[0]
+
+f = open("stocks_full_list.csv", "r")
+stocks_full_list = list(csv.reader(f))[0]
+
+f = open("s_and_p.csv", "r")
+s_and_p_list = list(csv.reader(f))[0]
+
+HEADERS = {"APCA-API-KEY-ID": API_KEY, "APCA-API-SECRET-KEY": SECRET_KEY}
+DATA_URL_1Min = "https://data.alpaca.markets/v1/bars/1Min"
+DATA_URL_15Min = "https://data.alpaca.markets/v1/bars/15Min"
+DATA_URL_1D = "https://data.alpaca.markets/v1/bars/1D"
+ORDERS_URL = "https://paper-api.alpaca.markets/v2/orders"
+
+
+def create_order(symbol, qty, side, type, time_in_force):
+    data = {
+        "symbol": symbol,
+        "qty": qty,
+        "side": side,
+        "type": type,
+        "time_in_force": time_in_force
+    }
+    r = requests.post(ORDERS_URL, json=data, headers=HEADERS)
+
+    print("{} share(s) of {} purchased.".format(qty, symbol))
+
+    return json.loads(r.content)
+
+
+def trade_list(stock_list):
+
+    now = datetime.datetime.now()
+    print("Start time : ")
+    print(now.strftime("%Y-%m-%d %H:%M:%S"))
+
+    high_volume_list = []
+
+    for i in stock_list:
+
+        PARAMS = {"symbols": i,
+                  "limit": 3}
+
+        r = requests.get(DATA_URL_1D, params=PARAMS, headers=HEADERS)
+
+        output = (json.loads(r.content))
+
+        clean_output = output[i]
+
+        volume_list = []
+        volume_sum = 0
+
+        for item in clean_output:
+            volume = item['v']
+            volume_list.append(volume)
+            volume_sum = volume_sum + volume
+
+        if volume_sum > 0:
+            volume_average = volume_sum / (len(volume_list))
+        else:
+            volume_average = None
+
+        if volume_average is not None and volume_average > 500000:
+
+            high_volume_list.append(i)
+
+    print("{} in high volume list: {}".format(len(high_volume_list), high_volume_list))
+
+    average_list = []
+
+    for i in high_volume_list:
+
+        PARAMS = {"symbols": i,
+                  "limit": 2}
+
+        r = requests.get(DATA_URL_1D, params=PARAMS, headers=HEADERS)
+
+        output = (json.loads(r.content))
+
+        clean_output = output[i]
+
+        close_list = []
+        close_sum = 0
+
+        for item in clean_output:
+            close = item['c']
+            close_list.append(close)
+            close_sum = close_sum + close
+
+        if close_sum > 0:
+            average = close_sum / (len(close_list))
+        else:
+            average = None
+
+        if average is not None:
+            PARAMS = {"symbols": i,
+                      "limit": 1}
+
+            r = requests.get(DATA_URL_15Min, params=PARAMS, headers=HEADERS)
+
+            output = (json.loads(r.content))
+            clean_output = output[i]
+            close = clean_output[0]['c']
+
+            value_above_average = close - average
+            percent_above_average = round(value_above_average / average, 4) * 100
+            average_tuple = (i, percent_above_average)
+            average_list.append(average_tuple)
+
+    negative_list = []
+
+    for i in average_list:
+        if i[1] < 0:
+            negative_list.append(i[0])
+
+    print("{} in below average list: {}".format(len(negative_list), negative_list))
+
+    three_in_a_row = []
+
+    for ticker in negative_list:
+
+        PARAMS = {"symbols": ticker,
+                  "limit": 3}
+
+        r = requests.get(DATA_URL_15Min, params=PARAMS, headers=HEADERS)
+
+        output = (json.loads(r.content))
+
+        clean_output = output[ticker]
+
+        days = 0
+        price = [None, None, None]
+
+        for i in clean_output:
+            close = i['c']
+            price[days] = close
+            days = days + 1
+
+        index = 2
+
+        while index > 0:
+            if price[index] > price[index - 1] and index == 1:
+                triple_tuple = (ticker, price)
+                three_in_a_row.append(triple_tuple[0])
+                break
+            elif price[index] > price[index - 1]:
+                index = index - 1
+                continue
+            else:
+                break
+
+    print("{} in final output list: {}".format(len(three_in_a_row), three_in_a_row))
+
+    now = datetime.datetime.now()
+    print("End time : ")
+    print(now.strftime("%Y-%m-%d %H:%M:%S"))
+
+    final_output = three_in_a_row
+
+    return final_output
+
+current_stock_list = []
+
+while True:
+    now = datetime.datetime.now()
+    open_time_string = "09:29:00"
+    close_time_string = "16:01:00"
+    open_datetime = datetime.datetime.strptime(open_time_string, "%H:%M:%S")
+    close_datetime = datetime.datetime.strptime(close_time_string, "%H:%M:%S")
+    open_datetime = now.replace(hour=open_datetime.time().hour, minute=open_datetime.time().minute,
+                                second=open_datetime.time().second, microsecond=0)
+    close_datetime = now.replace(hour=close_datetime.time().hour, minute=close_datetime.time().minute,
+                                 second=close_datetime.time().second, microsecond=0)
+    print(now)
+
+    if now > open_datetime and now < close_datetime:
+
+        print("market open")
+
+        if (now.minute == 15 and now.second == 00) or (now.minute == 30 and now.second == 00) or (now.minute == 45 and now.second == 00):
+
+            if now.minute == 15:
+                print(":15")
+            if now.minute == 30:
+                print(":30")
+            if now.minute == 45:
+                print(":45")
+
+            sell_list = []
+
+            for i in current_stock_list:
+
+                PARAMS = {"symbols": i[0],
+                          "limit": 1}
+
+                r = requests.get(DATA_URL_15Min, params=PARAMS, headers=HEADERS)
+                output = (json.loads(r.content))
+                clean_output = output[i[0]]
+
+                for item in clean_output:
+                    previous_price = item['c']
+
+                r = requests.get(DATA_URL_1Min, params=PARAMS, headers=HEADERS)
+
+                output = (json.loads(r.content))
+                clean_output = output[i[0]]
+
+                for item in clean_output:
+                    current_price = item['c']
+
+                if current_price < previous_price:
+                    create_order(i[0], i[1], "sell", "market", "gtc")
+                    sell_list.append(i)
+                    current_stock_list.remove(i)
+
+            print("The time is {}".format(now))
+            print("The following stocks were sold: {}".format(sell_list))
+            print("The following stocks remain: {}".format(current_stock_list))
+
+        elif now.minute == 00 and now.second == 00:
+
+            print(":00")
+            buy_list_stocks = trade_list(s_and_p_list)
+            current_stock_list_stocks = []
+            buy_list = []
+
+            for i in current_stock_list:
+                current_stock_list_stocks.append(i[0])
+
+            for i in buy_list_stocks:
+                buy_list.append((i, 1))
+
+            def diff(first, second):
+                second = set(second)
+                return [item for item in first if item not in second]
+
+            stocks_to_sell = diff(current_stock_list_stocks, buy_list_stocks)
+
+            sell_list = []
+
+            for i in current_stock_list:
+                if i[0] in stocks_to_sell:
+                    create_order(i[0], i[1], "sell", "market", "gtc")
+                    sell_list.append(i)
+                    current_stock_list.remove(i)
+
+            stocks_not_already_held = diff(buy_list, current_stock_list)
+            stocks_already_held = diff(buy_list, stocks_not_already_held)
+
+            print(buy_list)
+
+            for i in buy_list:
+                create_order(i[0], i[1], "buy", "market", "gtc")
+
+            for i in stocks_not_already_held:
+                current_stock_list.append(i)
+
+            for i in stocks_already_held:
+                i[1] = i[1] + 1
+
+            print("it's {}".format(now))
+            print("The following stocks were sold: {}".format(sell_list))
+            print("The following stocks remain: {}".format(current_stock_list))
+
+    time.sleep(1)
+    
